@@ -6,7 +6,13 @@ from yt_dlp.utils import download_range_func
 
 from .utils import log
 
-_BASE = {"quiet": True, "no_warnings": True, "noplaylist": True, "noprogress": True}
+_BASE = {
+    "quiet": True, "no_warnings": True, "noplaylist": True, "noprogress": True,
+    # YouTube needs a JS runtime to solve its player challenges (required for logged-in / age-restricted
+    # playback). Use Node (or Deno if installed) and let yt-dlp fetch its solver script.
+    "js_runtimes": {"node": {}, "deno": {}},
+    "remote_components": ["ejs:github"],
+}
 
 
 def set_cookies(cookie_file: str = "", browser: str = "") -> None:
