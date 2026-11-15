@@ -6,10 +6,16 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+def _key(name: str) -> str:
+    """Read an API key; treat placeholders like 'your_..._here' as not set."""
+    val = os.getenv(name, "").strip().strip('"').strip("'")
+    return "" if (not val or val.lower().startswith("your_")) else val
+
+
+GEMINI_API_KEY = _key("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest").strip()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_API_KEY = _key("GROQ_API_KEY")
 GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo").strip()
 
 LOCAL_WHISPER_MODEL = os.getenv("LOCAL_WHISPER_MODEL", "small").strip()
