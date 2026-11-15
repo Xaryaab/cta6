@@ -1,0 +1,2 @@
+# Optional: offline transcription fallback (CPU, slower) when no GROQ_API_KEY is set
+faster-whisper>=1.0
