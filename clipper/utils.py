@@ -14,8 +14,7 @@ def ensure_ffmpeg() -> None:
     """Use system ffmpeg if present, otherwise download a static build (first run only)."""
     if shutil.which("ffmpeg") and shutil.which("ffprobe"):
         return
-    log("FFmpeg not found on PATH - fetching static build (one-time download)...")
-    import static_ffmpeg
+    import static_ffmpeg  # downloads a static build on first use only, then reuses it
 
     static_ffmpeg.add_paths(weak=True)
     if not shutil.which("ffmpeg"):

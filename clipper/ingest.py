@@ -22,8 +22,26 @@ def set_cookies(cookie_file: str = "", browser: str = "") -> None:
 
 
 def get_info(url: str) -> dict:
-    with yt_dlp.YoutubeDL(_BASE) as ydl:
-        info = ydl.extract_info(url, download=False)
+    try:
+        with yt_dlp.YoutubeDL({**_BASE, "quiet": True, "no_warnings": True}) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except yt_dlp.utils.DownloadError as e:
+        msg = str(e).lower()
+        has_cookies = "cookiefile" in _BASE or "cookiesfrombrowser" in _BASE
+        if "confirm your age" in msg or "not a bot" in msg or "sign in" in msg:
+            if has_cookies:
+                raise SystemExit(
+                    "The site still wants a login even with cookies. Your cookies.txt may be expired or from a\n"
+                    "non-age-verified account - export a fresh one while logged in on youtube.com.")
+            raise SystemExit(
+                "This video needs a login (age-restricted or bot check).\n"
+                "  1. Install the 'Get cookies.txt LOCALLY' browser extension\n"
+                "  2. Open youtube.com while logged in (age-verified account) -> Export -> save as cookies.txt\n"
+                "     in the project folder\n"
+                "  3. In .env set: YTDLP_COOKIES_FILE=cookies.txt   (or pass --cookies cookies.txt)")
+        if "subscriber" in msg or "sub-only" in msg:
+            raise SystemExit("This VOD is subscriber-only. Use cookies from an account that's subscribed.")
+        raise SystemExit(f"Couldn't open the link: {str(e).replace('ERROR: ', '')[:300]}")
     if info.get("is_live"):
         raise SystemExit("Live streams aren't supported yet - wait for the VOD.")
     return info

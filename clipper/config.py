@@ -22,6 +22,8 @@ LOCAL_WHISPER_MODEL = os.getenv("LOCAL_WHISPER_MODEL", "small").strip()
 
 # Cookies for age-restricted videos (pick one): path to cookies.txt, or a browser name (firefox, edge, chrome, brave)
 YTDLP_COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE", "").strip().strip('"')
+if YTDLP_COOKIES_FILE and not Path(YTDLP_COOKIES_FILE).is_absolute():
+    YTDLP_COOKIES_FILE = str(ROOT / YTDLP_COOKIES_FILE)  # relative paths = relative to the project folder
 YTDLP_COOKIES_BROWSER = os.getenv("YTDLP_COOKIES_BROWSER", "").strip()
 
 OUTPUT_DIR = ROOT / "output"
