@@ -20,6 +20,10 @@ GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo").s
 
 LOCAL_WHISPER_MODEL = os.getenv("LOCAL_WHISPER_MODEL", "small").strip()
 
+# Cookies for age-restricted videos (pick one): path to cookies.txt, or a browser name (firefox, edge, chrome, brave)
+YTDLP_COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE", "").strip().strip('"')
+YTDLP_COOKIES_BROWSER = os.getenv("YTDLP_COOKIES_BROWSER", "").strip()
+
 OUTPUT_DIR = ROOT / "output"
 
 # Pipeline tuning

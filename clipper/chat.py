@@ -2,7 +2,7 @@
 from .utils import log
 
 
-def fetch_chat(url: str, start: float, end: float) -> list:
+def fetch_chat(url: str, start: float, end: float, cookies: str = "") -> list:
     """Returns [[time_seconds, message], ...]. Empty list if chat isn't available."""
     try:
         from chat_downloader import ChatDownloader
@@ -11,7 +11,7 @@ def fetch_chat(url: str, start: float, end: float) -> list:
     out = []
     try:
         log("Downloading chat replay (can take a while for long VODs)...")
-        chat = ChatDownloader().get_chat(url, start_time=int(start), end_time=int(end) + 1)
+        chat = ChatDownloader(cookies=cookies or None).get_chat(url, start_time=int(start), end_time=int(end) + 1)
         for msg in chat:
             t = msg.get("time_in_seconds")
             if t is None:

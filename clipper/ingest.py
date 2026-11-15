@@ -9,6 +9,18 @@ from .utils import log
 _BASE = {"quiet": True, "no_warnings": True, "noplaylist": True, "noprogress": True}
 
 
+def set_cookies(cookie_file: str = "", browser: str = "") -> None:
+    """Needed for age-restricted / sub-only videos. A cookies.txt file is the most reliable on Windows."""
+    if cookie_file:
+        if not Path(cookie_file).exists():
+            raise SystemExit(f"Cookies file not found: {cookie_file}")
+        _BASE["cookiefile"] = cookie_file
+        log(f"Using cookies file: {cookie_file}")
+    elif browser:
+        _BASE["cookiesfrombrowser"] = (browser.lower(),)
+        log(f"Using cookies from browser: {browser}")
+
+
 def get_info(url: str) -> dict:
     with yt_dlp.YoutubeDL(_BASE) as ydl:
         info = ydl.extract_info(url, download=False)

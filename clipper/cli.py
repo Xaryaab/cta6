@@ -7,7 +7,7 @@ import numpy as np
 from . import config
 from .captions import build_ass
 from .chat import fetch_chat
-from .ingest import download_audio, download_section, get_info, job_id
+from .ingest import download_audio, download_section, get_info, job_id, set_cookies
 from .render import prepare_fonts, render_clip
 from .select_llm import select_clips
 from .signals import find_candidates, loudness_per_second
@@ -25,12 +25,15 @@ def main(argv=None) -> None:
     ap.add_argument("--min-len", type=float, default=15)
     ap.add_argument("--max-len", type=float, default=60)
     ap.add_argument("--no-chat", action="store_true", help="skip chat replay download")
+    ap.add_argument("--cookies", default=config.YTDLP_COOKIES_FILE, help="cookies.txt for age-restricted videos")
+    ap.add_argument("--cookies-from-browser", default=config.YTDLP_COOKIES_BROWSER, help="firefox / edge / chrome / brave")
     ap.add_argument("--repick", action="store_true", help="ask the LLM again (ignore cached picks)")
     ap.add_argument("--rerender", action="store_true", help="redo captions + render only")
     args = ap.parse_args(argv)
 
     t0 = time.time()
     ensure_ffmpeg()
+    set_cookies(args.cookies, args.cookies_from_browser)
 
     log("Reading video info...")
     info = get_info(args.url)
@@ -74,7 +77,7 @@ def main(argv=None) -> None:
     elif chat_path.exists():
         chat = load_json(chat_path)
     else:
-        chat = fetch_chat(args.url, start, end)
+        chat = fetch_chat(args.url, start, end, args.cookies)
         save_json(chat_path, chat)
 
     # 4. signals -> candidates
