@@ -67,3 +67,10 @@ def slugify(text: str, max_len: int = 40) -> str:
     text = re.sub(r"[^\w\s-]", "", text or "").strip().lower()
     text = re.sub(r"[\s_-]+", "_", text)
     return text[:max_len].strip("_") or "clip"
+
+
+def short_hash(text: str) -> str:
+    """Stable short hash (Python's hash() changes every run, so it can't be used for cache keys)."""
+    import hashlib
+
+    return hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:8] if text else "0"

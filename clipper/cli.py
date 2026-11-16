@@ -1,35 +1,50 @@
-"""python -m clipper <url> [options]  ->  output/<job>/clips/*.mp4"""
+"""python -m clipper <url> [options]  ->  output/<job>/clips/<settings>/*.mp4"""
 import argparse
 import time
 
 import numpy as np
 
-from . import config
-from .captions import build_ass
+from . import config, llm
+from .captions import TEMPLATES, build_ass
 from .chat import fetch_chat
 from .ingest import download_audio, download_section, get_info, job_id, set_cookies
+from .layout import detect_facecam, parse_manual
 from .render import prepare_fonts, render_clip
-from .select_llm import select_clips
+from .select_llm import LENGTHS, STYLES, select_clips
 from .signals import find_candidates, loudness_per_second
 from .transcribe import transcribe
-from .utils import ensure_ffmpeg, fmt_time, load_json, log, parse_time, save_json, slugify
+from .twitch_clips import fetch_vod_clips
+from .utils import ensure_ffmpeg, fmt_time, load_json, log, parse_time, save_json, short_hash, slugify
+from .vision import watch_and_rank
 
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="clipper", description="Turn a stream/VOD URL into viral vertical clips.")
     ap.add_argument("url", help="Twitch / YouTube / Kick VOD or video URL")
     ap.add_argument("--clips", type=int, default=8, help="how many clips to make (default 8)")
-    ap.add_argument("--layout", choices=["blur", "crop"], default="blur", help="blur = full frame + blurred bg; crop = center crop")
+    ap.add_argument("--style", choices=list(STYLES), default="auto", help="kind of moments to look for")
+    ap.add_argument("--prompt", default="", help='custom request, e.g. "every police chase"')
+    ap.add_argument("--length", choices=list(LENGTHS), default="auto",
+                    help="auto=15-60s, short=10-30s, medium=30-60s, long=60-90s")
+    ap.add_argument("--min-len", type=float, default=None, help="override min clip length (s)")
+    ap.add_argument("--max-len", type=float, default=None, help="override max clip length (s)")
+    ap.add_argument("--layout", choices=["auto", "split", "blur", "crop"], default="auto",
+                    help="auto = facecam/gameplay split if a webcam is found, else blur")
+    ap.add_argument("--facecam", default="", help="manual webcam box as fractions x,y,w,h (e.g. 0.75,0,0.25,0.3)")
+    ap.add_argument("--captions", choices=list(TEMPLATES), default="bold", help="caption template")
     ap.add_argument("--from", dest="t_from", help="start of window to analyse, e.g. 1:00:00")
     ap.add_argument("--to", dest="t_to", help="end of window to analyse, e.g. 2:00:00")
-    ap.add_argument("--min-len", type=float, default=15)
-    ap.add_argument("--max-len", type=float, default=60)
     ap.add_argument("--no-chat", action="store_true", help="skip chat replay download")
+    ap.add_argument("--no-vision", action="store_true", help="skip the visual pass (faster, uses less quota)")
     ap.add_argument("--cookies", default=config.YTDLP_COOKIES_FILE, help="cookies.txt for age-restricted videos")
     ap.add_argument("--cookies-from-browser", default=config.YTDLP_COOKIES_BROWSER, help="firefox / edge / chrome / brave")
     ap.add_argument("--repick", action="store_true", help="ask the LLM again (ignore cached picks)")
     ap.add_argument("--rerender", action="store_true", help="redo captions + render only")
     args = ap.parse_args(argv)
+
+    min_len, max_len = LENGTHS[args.length]
+    min_len = args.min_len if args.min_len is not None else min_len
+    max_len = args.max_len if args.max_len is not None else max_len
 
     t0 = time.time()
     ensure_ffmpeg()
@@ -43,20 +58,23 @@ def main(argv=None) -> None:
     if not end:
         raise SystemExit("Couldn't determine video length; pass --to.")
     end = min(end, duration) if duration else end
-    if end - start < args.min_len:
-        raise SystemExit("Window is shorter than --min-len.")
+    if end - start < min_len:
+        raise SystemExit("Window is shorter than the minimum clip length.")
     full = start <= 0 and (not duration or end >= duration)
     tag = "full" if full else f"{int(start)}_{int(end)}"
 
     job_dir = config.OUTPUT_DIR / job_id(info)
     work = job_dir / f"work_{tag}"
-    clips_dir = job_dir / "clips"
-    for d in (job_dir, work, clips_dir):
+    sources = job_dir / "sources"
+    run_tag = f"{args.style}_{args.length}" + (f"_{slugify(args.prompt, 24)}" if args.prompt else "")
+    clips_dir = job_dir / "clips" / run_tag
+    for d in (job_dir, work, sources, clips_dir):
         d.mkdir(parents=True, exist_ok=True)
     save_json(job_dir / "meta.json", {"url": args.url, "title": info.get("title"), "uploader": info.get("uploader"),
                                       "duration": duration})
     log(f"'{info.get('title')}' ({fmt_time(duration)}) -> analysing {fmt_time(start)}-{fmt_time(end)}")
-    log(f"Job folder: {job_dir}")
+    log(f"Settings: {args.clips} clips | style {args.style} | {int(min_len)}-{int(max_len)}s | layout {args.layout} "
+        f"| captions {args.captions}" + (f" | prompt: {args.prompt!r}" if args.prompt else ""))
 
     # 1. audio
     audio = download_audio(args.url, job_dir, start, end, full)
@@ -70,7 +88,7 @@ def main(argv=None) -> None:
         save_json(tr_path, transcript)
     log(f"Transcript: {len(transcript['words'])} words")
 
-    # 3. chat
+    # 3. audience signals: chat, viewer clips, most-replayed heatmap
     chat_path = work / "chat.json"
     if args.no_chat:
         chat = []
@@ -80,6 +98,17 @@ def main(argv=None) -> None:
         chat = fetch_chat(args.url, start, end, args.cookies)
         save_json(chat_path, chat)
 
+    tw_path = job_dir / "twitch_clips.json"
+    if tw_path.exists():
+        twitch = load_json(tw_path)
+    else:
+        twitch = fetch_vod_clips(info)
+        if twitch:
+            save_json(tw_path, twitch)
+    heatmap = info.get("heatmap") or []
+    if heatmap:
+        log("Using YouTube 'most replayed' heatmap")
+
     # 4. signals -> candidates
     loud_path = work / "loudness.npy"
     if loud_path.exists():
@@ -88,43 +117,81 @@ def main(argv=None) -> None:
         log("Analysing audio loudness...")
         loud = loudness_per_second(audio)
         np.save(loud_path, loud)
-    candidates = find_candidates(start, end, loud, transcript["words"], chat)
+    candidates = find_candidates(start, end, loud, transcript["words"], chat, heatmap, twitch)
     save_json(work / "candidates.json", candidates)
     log(f"Candidate moments: {len(candidates)}")
 
-    # 5. LLM selection
-    picks_path = work / f"picks_{args.clips}.json"
-    if picks_path.exists() and not args.repick:
-        picks = load_json(picks_path)
+    # 5. text pass (shortlist) -> 6. visual pass + rerank
+    use_vision = llm.available() and not args.no_vision
+    key = f"{args.clips}_{args.style}_{int(min_len)}_{int(max_len)}_{short_hash(args.prompt)}"
+    shortlist_n = args.clips * 2 if use_vision else args.clips
+    text_path = work / f"text_{key}.json"
+    final_path = work / f"final_{key}{'' if use_vision else '_novision'}.json"
+    if args.repick:
+        text_path.unlink(missing_ok=True)
+        final_path.unlink(missing_ok=True)
+
+    if final_path.exists():
+        picks = load_json(final_path)
     else:
-        picks = select_clips(candidates, transcript, args.clips, args.min_len, args.max_len, info.get("title") or "")
-        save_json(picks_path, picks)
+        if text_path.exists():
+            shortlist = load_json(text_path)
+        else:
+            shortlist = select_clips(candidates, transcript, shortlist_n, min_len, max_len, info.get("title") or "",
+                                     args.style, args.prompt)
+            save_json(text_path, shortlist)
+        log(f"Shortlisted {len(shortlist)} clips")
+        if use_vision:
+            picks = watch_and_rank(shortlist, args.url, sources, work, transcript, args.clips,
+                                   min_len, max_len, args.style, args.prompt)
+        else:
+            picks = shortlist[: args.clips]
+        save_json(final_path, picks)
     if not picks:
         raise SystemExit("No clips selected.")
-    log(f"Selected {len(picks)} clips")
+    log(f"Final clips: {len(picks)}")
 
-    # 6. download sections + captions + render
+    # 7. download full-quality sections
+    srcs = []
+    for p in picks:
+        s, e = p["start"], p["end"]
+        pad_s = max(0.0, s - config.SECTION_PAD)
+        srcs.append((download_section(args.url, sources, f"src_{int(s * 10)}_{int(e * 10)}", pad_s,
+                                      e + config.SECTION_PAD), pad_s))
+
+    # 8. layout
+    facecam = parse_manual(args.facecam) if args.facecam else None
+    layout = args.layout
+    if layout in ("auto", "split") and not facecam:
+        facecam = detect_facecam(job_dir, [s for s, _ in srcs])
+    if layout == "auto":
+        layout = "split" if facecam else "blur"
+    if layout == "split" and not facecam:
+        log("No facecam found - using blur layout instead (pass --facecam x,y,w,h to set it manually)")
+        layout = "blur"
+    log(f"Layout: {layout}")
+
+    # 9. captions + render
     prepare_fonts(job_dir)
-    sources = job_dir / "sources"
-    sources.mkdir(exist_ok=True)
     summary = []
-    for i, p in enumerate(picks, 1):
+    for i, (p, (src, pad_s)) in enumerate(zip(picks, srcs), 1):
         s, e = p["start"], p["end"]
         name = f"{i:02d}_{slugify(p['title'])}"
-        out = clips_dir / f"{name}_{args.layout}.mp4"
-        log(f"[{i}/{len(picks)}] {fmt_time(s)}-{fmt_time(e)} ({e - s:.0f}s) {p['title']!r}")
+        out = clips_dir / f"{name}_{layout}_{args.captions}.mp4"
+        log(f"[{i}/{len(picks)}] {fmt_time(s)}-{fmt_time(e)} ({e - s:.0f}s) score {p.get('score')}: {p['title']!r}")
         if out.exists() and not args.rerender:
             log("   already rendered")
         else:
-            pad_s = max(0.0, s - config.SECTION_PAD)
-            src = download_section(args.url, sources, f"src_{int(s * 10)}_{int(e * 10)}", pad_s, e + config.SECTION_PAD)
             ass = work / f"{name}.ass"
-            build_ass(transcript["words"], s, e, p["title"], args.layout, ass)
+            build_ass(transcript["words"], s, e, p["title"], layout, ass, args.captions)
             log("   rendering...")
-            render_clip(job_dir, src, s - pad_s, e - s, ass, out, args.layout)
-        summary.append({**p, "file": str(out), "timestamp": fmt_time(s)})
+            render_clip(job_dir, src, s - pad_s, e - s, ass, out, layout, facecam)
+        tags = " ".join(f"#{h}" for h in p.get("hashtags") or [])
+        (clips_dir / f"{name}.txt").write_text(
+            f"{p['title']}\n\n{p.get('description') or p.get('reason', '')}\n\n{tags}\n", encoding="utf-8")
+        summary.append({**p, "file": str(out), "timestamp": fmt_time(s), "layout": layout})
 
     save_json(clips_dir / "clips.json", summary)
     log(f"Done in {fmt_time(time.time() - t0)} -> {clips_dir}")
     for c in summary:
-        log(f"  [{c['timestamp']}] score {c['score']}: {c['title']}  - {c['reason']}")
+        log(f"  [{c['timestamp']}] score {c.get('score')}: {c['title']}  - {c.get('reason', '')}")

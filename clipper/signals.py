@@ -1,4 +1,13 @@
-"""Find candidate 'something happened' moments from audio loudness, chat activity and hype words."""
+"""Find candidate 'something happened' moments.
+
+Signals (each normalised within this video, so quiet and loud streamers both get real peaks):
+  - audio spikes vs. the local 2-minute baseline
+  - "payoff shape": quiet -> sudden loud within a few seconds (reactions, screams, crashes)
+  - hype words in the transcript
+  - chat: UNIQUE chatters per 5s (spam-proof) + hype emotes, shifted back for chat delay
+  - YouTube "most replayed" heatmap (small, capped bonus)
+  - viewer-made Twitch clips on this VOD (strong bonus)
+"""
 import re
 import subprocess
 from pathlib import Path
@@ -17,6 +26,7 @@ CHAT_HYPE = re.compile(
     r"wtf|omg|xd+|hah+a+|lol+|\?{2,}|!{2,}|aware|icant|sadge)\b",
     re.I,
 )
+CHAT_DELAY = 6  # chat reacts a few seconds after the moment
 
 
 def loudness_per_second(audio: Path) -> np.ndarray:
@@ -51,13 +61,27 @@ def _z(x: np.ndarray) -> np.ndarray:
     return np.clip((x - x.mean()) / x.std(), -3, 6)
 
 
-def find_candidates(start: float, end: float, loud: np.ndarray, words: list, chat: list) -> list:
+def _payoff(a: np.ndarray) -> np.ndarray:
+    """Loudest of the next 3s minus the average of the previous 6s: rewards sudden jumps out of calm."""
+    n = a.size
+    out = np.zeros(n, dtype=np.float32)
+    if n < 12:
+        return out
+    pad = np.pad(a, (6, 3), mode="edge")
+    for i in range(n):
+        out[i] = pad[i + 6:i + 9].max() - pad[i:i + 6].mean()
+    return np.maximum(out, 0)
+
+
+def find_candidates(start: float, end: float, loud: np.ndarray, words: list, chat: list,
+                    heatmap: list | None = None, twitch_clips: list | None = None) -> list:
     n = max(1, int(end - start) + 1)
 
-    # Audio: spikes relative to the local (2-minute) baseline, so loud streamers aren't always "hype".
+    # Audio
     a = np.full(n, loud.min() if loud.size else -60, dtype=np.float32)
     a[: min(n, loud.size)] = loud[:n]
     audio_score = _z(_smooth(a - _smooth(a, 120), 3))
+    payoff_score = _z(_smooth(_payoff(a), 3))
 
     # Transcript hype words
     kw = np.zeros(n, dtype=np.float32)
@@ -73,18 +97,49 @@ def find_candidates(start: float, end: float, loud: np.ndarray, words: list, cha
                 kw[i] += 0.3
     kw_score = _z(_smooth(kw, 8))
 
-    # Chat activity: volume + hype emotes. Chat lags the moment by a few seconds -> shift back.
+    # Chat: unique chatters per 5s block (one person spamming counts once) + hype emotes
     has_chat = len(chat) > 50
     chat_score = np.zeros(n, dtype=np.float32)
     if has_chat:
         c = np.zeros(n, dtype=np.float32)
-        for t, msg in chat:
-            i = int(t - start) - 6
-            if 0 <= i < n:
-                c[i] += 1.0 + (1.0 if CHAT_HYPE.search(msg or "") else 0.0)
+        seen = set()
+        for row in chat:
+            t, msg = row[0], row[1]
+            author = row[2] if len(row) > 2 and row[2] else None
+            i = int(t - start) - CHAT_DELAY
+            if not 0 <= i < n:
+                continue
+            if author:
+                key = (author, i // 5)
+                if key in seen:
+                    continue
+                seen.add(key)
+            c[i] += 1.0 + (0.8 if CHAT_HYPE.search(msg or "") else 0.0)
         chat_score = _z(_smooth(c, 10) - _smooth(c, 300))
 
-    score = _smooth(1.0 * audio_score + (1.6 * chat_score if has_chat else 0) + 0.8 * kw_score, 5)
+    # YouTube most-replayed heatmap
+    heat_score = np.zeros(n, dtype=np.float32)
+    if heatmap:
+        h = np.zeros(n, dtype=np.float32)
+        for seg in heatmap:
+            i0, i1 = int(seg.get("start_time", 0) - start), int(seg.get("end_time", 0) - start)
+            h[max(0, i0):max(0, min(n, i1))] = float(seg.get("value") or 0)
+        heat_score = np.clip(_z(h), 0, 3)
+
+    # Viewer-made Twitch clips (the moment is usually near the end of a 30s clip)
+    tw = np.zeros(n, dtype=np.float32)
+    for clip in twitch_clips or []:
+        center = clip["offset"] + clip["duration"] * 0.65 - start
+        i0, i1 = int(center - 8), int(center + 8)
+        if i1 > 0 and i0 < n:
+            tw[max(0, i0):min(n, i1)] += 1.0
+    twitch_score = np.minimum(tw, 4) * 1.2
+
+    score = _smooth(
+        1.0 * audio_score + 0.6 * payoff_score + 0.8 * kw_score
+        + (1.6 * chat_score if has_chat else 0) + 0.5 * heat_score + twitch_score,
+        5,
+    )
 
     # Peak picking with minimum spacing (non-max suppression)
     order = np.argsort(-score)
@@ -106,6 +161,7 @@ def find_candidates(start: float, end: float, loud: np.ndarray, words: list, cha
             "audio": round(float(audio_score[i]), 2),
             "chat": round(float(chat_score[i]), 2),
             "words": round(float(kw_score[i]), 2),
+            "twitch_clips": int(tw[i]),
         }
         for k, i in enumerate(sorted(picked, key=lambda i: -score[i]))
     ]

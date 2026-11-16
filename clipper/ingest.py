@@ -82,14 +82,14 @@ def download_audio(url: str, out_dir: Path, start: float, end: float, full: bool
     return path
 
 
-def download_section(url: str, out_dir: Path, stem: str, start: float, end: float) -> Path:
-    """Download just [start, end] of the video (<=1080p)."""
+def download_section(url: str, out_dir: Path, stem: str, start: float, end: float, max_height: int = 1080) -> Path:
+    """Download just [start, end] of the video (<= max_height)."""
     existing = _find(out_dir, stem)
     if existing:
         return existing
     opts = {
         **_BASE,
-        "format": "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b",
+        "format": f"bv*[height<={max_height}]+ba/b[height<={max_height}]/wv*+ba/w",
         "merge_output_format": "mp4",
         "outtmpl": str(out_dir / f"{stem}.%(ext)s"),
         "download_ranges": download_range_func(None, [(start, end)]),

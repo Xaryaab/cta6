@@ -3,7 +3,7 @@ from .utils import log
 
 
 def fetch_chat(url: str, start: float, end: float, cookies: str = "") -> list:
-    """Returns [[time_seconds, message], ...]. Empty list if chat isn't available."""
+    """Returns [[time_seconds, message, author], ...]. Empty list if chat isn't available."""
     try:
         from chat_downloader import ChatDownloader
     except ImportError:
@@ -16,7 +16,8 @@ def fetch_chat(url: str, start: float, end: float, cookies: str = "") -> list:
             t = msg.get("time_in_seconds")
             if t is None:
                 continue
-            out.append([round(float(t), 1), msg.get("message") or ""])
+            author = (msg.get("author") or {}).get("name") or ""
+            out.append([round(float(t), 1), msg.get("message") or "", author])
             if len(out) % 10000 == 0:
                 log(f"  ...{len(out)} chat messages")
     except Exception as e:  # chat is optional - never fail the job over it
