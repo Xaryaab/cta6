@@ -39,7 +39,8 @@ GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "").strip() or GEMINI_MOD
 GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL") or "gemini-3.7-flash"  # used when the main model returns 503
 CHAT_TIMEOUT = float(os.getenv("CHAT_TIMEOUT") or 600)  # seconds; chat replay is optional, never let it hang a run
 
-GROQ_API_KEY = _key("GROQ_API_KEY")
+GROQ_API_KEYS = _key_list("GROQ_API_KEY", "GROQ_API_KEYS")
+GROQ_API_KEY = GROQ_API_KEYS[0] if GROQ_API_KEYS else ""
 GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo").strip()
 
 LOCAL_WHISPER_MODEL = os.getenv("LOCAL_WHISPER_MODEL", "small").strip()

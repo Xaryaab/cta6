@@ -29,7 +29,7 @@ def transcribe(audio: Path, offset: float, length: float, work_dir: Path) -> dic
 def _groq(audio: Path, offset: float, length: float, work_dir: Path) -> dict:
     import groq
 
-    client = groq.Groq(api_key=config.GROQ_API_KEY, max_retries=0)
+    clients = [groq.Groq(api_key=k, max_retries=0) for k in config.GROQ_API_KEYS]
     chunks_dir = work_dir / "chunks"
     chunks_dir.mkdir(exist_ok=True)
     n = max(1, math.ceil(length / config.CHUNK_SECONDS))
@@ -45,7 +45,7 @@ def _groq(audio: Path, offset: float, length: float, work_dir: Path) -> dict:
             run(["ffmpeg", "-y", "-ss", cs, "-t", config.CHUNK_SECONDS, "-i", audio,
                  "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", mp3])
             log(f"Transcribing chunk {i + 1}/{n} (Groq)...")
-            data = _groq_call(client, mp3)
+            data = _groq_call(clients, mp3)
             save_json(cache, data)
             mp3.unlink(missing_ok=True)
 
@@ -58,11 +58,19 @@ def _groq(audio: Path, offset: float, length: float, work_dir: Path) -> dict:
     return {"words": [w for w in words if w["w"]], "segments": segments}
 
 
-def _groq_call(client, mp3: Path) -> dict:
+_groq_idx = 0
+
+
+def _groq_call(clients: list, mp3: Path) -> dict:
+    """Several keys (one per account) are rotated: a rate-limited key hands over to the next one,
+    and we only wait once every key is limited."""
     import groq
 
+    global _groq_idx
     payload = mp3.read_bytes()
-    for attempt in range(8):
+    limited = 0
+    for attempt in range(8 + 2 * len(clients)):
+        client = clients[_groq_idx % len(clients)]
         try:
             resp = client.audio.transcriptions.create(
                 file=(mp3.name, payload),
@@ -73,8 +81,15 @@ def _groq_call(client, mp3: Path) -> dict:
             data = resp.to_dict() if hasattr(resp, "to_dict") else resp.model_dump()
             return {"words": data.get("words") or [], "segments": data.get("segments") or []}
         except groq.RateLimitError as e:
+            limited += 1
+            if limited < len(clients):
+                _groq_idx += 1
+                log(f"Groq key {(_groq_idx - 1) % len(clients) + 1} rate limited - switching to the next key")
+                continue
+            limited = 0
+            _groq_idx += 1
             wait = _retry_after(e) or 60
-            log(f"Groq rate limit hit - waiting {wait:.0f}s (free tier)...")
+            log(f"Groq rate limit hit on all keys - waiting {wait:.0f}s (free tier)...")
             time.sleep(wait)
         except (groq.APIConnectionError, groq.InternalServerError) as e:
             wait = 5 * (attempt + 1)
