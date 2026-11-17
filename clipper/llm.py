@@ -48,6 +48,7 @@ def ask_json(contents, model: str | None = None, temperature: float = 0.4, low_m
     from google.genai import types
 
     model = model or config.GEMINI_MODEL
+    overloaded = 0
     for attempt in range(6):
         cfg = {"response_mime_type": "application/json", "temperature": temperature}
         if low_media:
@@ -76,6 +77,13 @@ def ask_json(contents, model: str | None = None, temperature: float = 0.4, low_m
             if any(c in msg for c in ("400", "403", "404")):
                 log(f"{label}: request rejected ({msg[:200]})")
                 return None
+            if ("503" in msg or "UNAVAILABLE" in msg or "overloaded" in msg.lower()):
+                overloaded += 1
+                fb = config.GEMINI_FALLBACK_MODEL
+                if overloaded >= 2 and fb and fb != model:
+                    log(f"{label}: {model} is overloaded - switching to {fb}")
+                    model = fb
+                    continue
             wait = 5 * (attempt + 1)
             log(f"{label}: error ({msg[:120]}) - retrying in {wait}s...")
             time.sleep(wait)

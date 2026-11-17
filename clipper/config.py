@@ -17,6 +17,8 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
 
 # Model that WATCHES video in the visual pass (defaults to GEMINI_MODEL)
 GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "").strip() or GEMINI_MODEL
+GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL") or "gemini-3.7-flash"  # used when the main model returns 503
+CHAT_TIMEOUT = float(os.getenv("CHAT_TIMEOUT") or 600)  # seconds; chat replay is optional, never let it hang a run
 
 GROQ_API_KEY = _key("GROQ_API_KEY")
 GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo").strip()
