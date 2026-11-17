@@ -19,6 +19,8 @@ Decide the single best self-contained short clip inside this excerpt:
 - {min_len}-{max_len} seconds long
 - judge what you SEE and HEAR (crashes, chases, reactions, facial expressions, tone), not just the words
 
+Write title, description and hashtags in the SAME LANGUAGE the streamer speaks (e.g. Russian stream -> Russian title).
+
 Return ONLY JSON:
 {{"keep": <true if this is genuinely post-worthy, else false>,
   "start": <seconds from excerpt start>, "end": <seconds from excerpt start>,

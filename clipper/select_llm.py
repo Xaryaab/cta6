@@ -31,6 +31,8 @@ Pick the {n} BEST clips. A great clip:
 Skip loud gameplay where nothing interesting is said, ads, and "be right back" segments.
 Clips must not overlap. Use only timestamps inside a candidate's transcript window.
 
+Write titles in the SAME LANGUAGE the streamer speaks.
+
 Return ONLY a JSON array, best first, of objects:
 {{"candidate": <id>, "start": <seconds>, "end": <seconds>, "title": "<hook caption, max 8 words, no hashtags>",
   "score": <1-100 virality>, "reason": "<one short sentence>"}}

@@ -7,6 +7,7 @@ from . import config
 from .utils import log
 
 _client = None
+_exhausted: set = set()  # models whose daily quota ran out this run
 
 
 def _get_client():
@@ -48,6 +49,10 @@ def ask_json(contents, model: str | None = None, temperature: float = 0.4, low_m
     from google.genai import types
 
     model = model or config.GEMINI_MODEL
+    if model in _exhausted and config.GEMINI_FALLBACK_MODEL not in _exhausted:
+        model = config.GEMINI_FALLBACK_MODEL
+    if model in _exhausted:
+        return None
     overloaded = 0
     for attempt in range(6):
         cfg = {"response_mime_type": "application/json", "temperature": temperature}
@@ -64,6 +69,12 @@ def ask_json(contents, model: str | None = None, temperature: float = 0.4, low_m
         except Exception as e:
             msg = str(e)
             if "PerDay" in msg or "per day" in msg.lower():
+                _exhausted.add(model)
+                fb = config.GEMINI_FALLBACK_MODEL
+                if fb and fb not in _exhausted:
+                    log(f"{label}: daily quota for {model} used up - switching to {fb}")
+                    model = fb
+                    continue
                 log(f"{label}: daily free-tier quota used up - skipping this step.")
                 return None
             if "429" in msg or "RESOURCE_EXHAUSTED" in msg:

@@ -49,7 +49,10 @@ def detect_facecam(job_dir: Path, sources: list[Path]) -> dict | None:
         res = llm.ask_json([types.Part.from_bytes(data=frame.read_bytes(), mime_type="image/jpeg"), PROMPT],
                            temperature=0.0, label="Facecam detection")
         frame.unlink(missing_ok=True)
-        fc = res.get("facecam") if isinstance(res, dict) else None
+        if not isinstance(res, dict):  # Gemini failed (quota/outage) - don't cache a false "no facecam"
+            log("Facecam detection unavailable right now - using blur layout (not cached, will retry next run)")
+            return None
+        fc = res.get("facecam")
         if not (isinstance(fc, list) and len(fc) == 4):
             boxes.append(None)
             continue
