@@ -22,6 +22,9 @@ copy .env.example .env   # then paste your free keys
 ```
 - Gemini key: https://aistudio.google.com/apikey
 - Groq key: https://console.groq.com/keys
+- **More free quota:** put extra Gemini keys (other Google accounts) in `GEMINI_API_KEYS=k2,k3,...` - they're rotated
+  when one hits its limit. Add free OpenRouter keys in `OPENROUTER_API_KEYS=...` and the text-only steps (text pass,
+  rerank) run there, so Gemini quota is kept for watching video.
 
 FFmpeg is downloaded automatically on the first run if it isn't installed.
 

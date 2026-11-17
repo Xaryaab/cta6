@@ -132,7 +132,7 @@ def _rerank(clips: list, transcript: dict, n: int, style_text: str, prompt: str)
         blocks.append(f"--- Clip {c['id']} ({c['end'] - c['start']:.0f}s, individual score {c.get('score')}) ---\n"
                       f"Title: {c['title']}\nWhat happens: {c.get('reason', '')}\nSpeech:\n{speech}")
     log(f"Rerank: comparing {len(clips)} clips head-to-head...")
-    res = llm.ask_json(RERANK_PROMPT.format(k=len(clips), n=n, style=style_text, user_prompt=user_prompt_text(prompt),
+    res = llm.ask_text_json(RERANK_PROMPT.format(k=len(clips), n=n, style=style_text, user_prompt=user_prompt_text(prompt),
                                             blocks="\n\n".join(blocks)), temperature=0.2, label="Rerank")
     order = res.get("order") if isinstance(res, dict) else res if isinstance(res, list) else None
     by_id = {c["id"]: c for c in clips}

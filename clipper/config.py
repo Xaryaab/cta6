@@ -12,7 +12,26 @@ def _key(name: str) -> str:
     return "" if (not val or val.lower().startswith("your_")) else val
 
 
-GEMINI_API_KEY = _key("GEMINI_API_KEY")
+def _key_list(*names: str) -> list[str]:
+    """Collect keys from single-key vars and comma-separated list vars, deduplicated, placeholders dropped."""
+    out = []
+    for name in names:
+        for v in os.getenv(name, "").split(","):
+            v = v.strip().strip('"').strip("'")
+            if v and not v.lower().startswith("your_") and v not in out:
+                out.append(v)
+    return out
+
+
+# Several free keys (from different Google accounts) are rotated when one hits its limit.
+GEMINI_API_KEYS = _key_list("GEMINI_API_KEY", "GEMINI_API_KEYS")
+GEMINI_API_KEY = GEMINI_API_KEYS[0] if GEMINI_API_KEYS else ""
+
+# OpenRouter (optional) handles the text-only steps (text pass, rerank) so Gemini quota is saved for watching video.
+OPENROUTER_API_KEYS = _key_list("OPENROUTER_API_KEY", "OPENROUTER_API_KEYS")
+OPENROUTER_MODELS = [m.strip() for m in (os.getenv("OPENROUTER_MODELS") or
+                     "google/gemma-4-31b-it:free,nvidia/nemotron-3-ultra-550b-a55b:free,inclusionai/ling-3.2-flash:free"
+                     ).split(",") if m.strip()]
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
 
 # Model that WATCHES video in the visual pass (defaults to GEMINI_MODEL)

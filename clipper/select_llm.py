@@ -76,9 +76,9 @@ def select_clips(candidates: list, transcript: dict, n: int, min_len: float, max
         )
 
     picks = None
-    if llm.available():
-        log(f"Text pass: Gemini reads {len(candidates)} candidates (style: {style}{', prompt' if prompt else ''})...")
-        picks = llm.ask_json(PROMPT.format(
+    if llm.text_available():
+        log(f"Text pass: AI reads {len(candidates)} candidates (style: {style}{', prompt' if prompt else ''})...")
+        picks = llm.ask_text_json(PROMPT.format(
             k=len(candidates), n=n, min_len=int(min_len), max_len=int(max_len), title=title,
             style=STYLES.get(style, STYLES["auto"]), user_prompt=user_prompt_text(prompt), blocks="\n\n".join(blocks),
         ), label="Text pass")

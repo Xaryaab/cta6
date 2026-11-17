@@ -145,7 +145,7 @@ def main(argv=None) -> None:
         else:
             shortlist = select_clips(candidates, transcript, shortlist_n, min_len, max_len, info.get("title") or "",
                                      args.style, args.prompt)
-            if llm.quota_out():
+            if llm.text_available() and all(p.get("reason") == "signal-only" for p in shortlist):
                 _quota_exit()
             save_json(text_path, shortlist)
         log(f"Shortlisted {len(shortlist)} clips")
