@@ -23,6 +23,12 @@ def available() -> bool:
     return bool(config.GEMINI_API_KEY)
 
 
+def quota_out() -> bool:
+    """True once every model we can use has hit its daily free-tier limit this run."""
+    return config.GEMINI_MODEL in _exhausted and (
+        not config.GEMINI_FALLBACK_MODEL or config.GEMINI_FALLBACK_MODEL in _exhausted)
+
+
 def parse_json(text: str):
     text = re.sub(r"^```(?:json)?|```$", "", (text or "").strip(), flags=re.M).strip()
     try:

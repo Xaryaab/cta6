@@ -18,6 +18,12 @@ from .utils import ensure_ffmpeg, fmt_time, load_json, log, parse_time, save_jso
 from .vision import watch_and_rank
 
 
+def _quota_exit():
+    raise SystemExit("Gemini's free daily quota is used up, so clips can't be picked properly right now. "
+                     "Everything done so far is saved - rerun the same command after the quota resets "
+                     "(midnight Pacific time) and it picks up from here.")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="clipper", description="Turn a stream/VOD URL into viral vertical clips.")
     ap.add_argument("url", help="Twitch / YouTube / Kick VOD or video URL")
@@ -139,6 +145,8 @@ def main(argv=None) -> None:
         else:
             shortlist = select_clips(candidates, transcript, shortlist_n, min_len, max_len, info.get("title") or "",
                                      args.style, args.prompt)
+            if llm.quota_out():
+                _quota_exit()
             save_json(text_path, shortlist)
         log(f"Shortlisted {len(shortlist)} clips")
         if use_vision:
@@ -146,6 +154,8 @@ def main(argv=None) -> None:
                                    min_len, max_len, args.style, args.prompt)
         else:
             picks = shortlist[: args.clips]
+        if use_vision and llm.quota_out():
+            _quota_exit()
         save_json(final_path, picks)
     if not picks:
         raise SystemExit("No clips selected.")
