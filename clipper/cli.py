@@ -5,6 +5,7 @@ import time
 import numpy as np
 
 from . import config, llm
+from .align import source_start
 from .captions import TEMPLATES, build_ass
 from .chat import fetch_chat
 from .ingest import download_audio, download_section, get_info, job_id, set_cookies
@@ -177,8 +178,8 @@ def main(argv=None) -> None:
     for p in picks:
         s, e = p["start"], p["end"]
         pad_s = max(0.0, s - config.SECTION_PAD)
-        srcs.append((download_section(args.url, sources, f"src_{int(s * 10)}_{int(e * 10)}", pad_s,
-                                      e + config.SECTION_PAD), pad_s))
+        src = download_section(args.url, sources, f"src_{int(s * 10)}_{int(e * 10)}", pad_s, e + config.SECTION_PAD)
+        srcs.append((src, source_start(src, audio, start, pad_s)))
 
     # 8. layout
     facecam = parse_manual(args.facecam) if args.facecam else None
