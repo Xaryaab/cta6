@@ -178,7 +178,8 @@ def main(argv=None) -> None:
     for p in picks:
         s, e = p["start"], p["end"]
         pad_s = max(0.0, s - config.SECTION_PAD)
-        src = download_section(args.url, sources, f"src_{int(s * 10)}_{int(e * 10)}", pad_s, e + config.SECTION_PAD)
+        src = download_section(args.url, sources, f"src_{int(s * 10)}_{int(e * 10)}", pad_s, e + config.SECTION_PAD,
+                               info=info)
         srcs.append((src, source_start(src, audio, start, pad_s)))
 
     # 8. layout

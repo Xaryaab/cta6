@@ -67,14 +67,8 @@ def _find(out_dir: Path, stem: str) -> Path | None:
     return None
 
 
-def _hls_audio(info: dict, start: float, end: float, out: Path) -> bool:
-    """Fast path for HLS audio (Twitch): fetch the segments covering [start, end] in parallel, then trim to the
-    exact window. yt-dlp's ranged download goes through ffmpeg one segment at a time - hours for a long VOD."""
-    fmts = [f for f in info.get("formats") or [] if "m3u8" in (f.get("protocol") or "")]
-    audio = [f for f in fmts if f.get("vcodec") == "none"] or sorted(fmts, key=lambda f: f.get("tbr") or 1e9)[:1]
-    if not audio:
-        return False
-    m3u8 = audio[0]["url"]
+def _hls_segments(m3u8: str, start: float, end: float) -> list:
+    """[(segment start time, url)] of the HLS segments overlapping [start, end]."""
     with urllib.request.urlopen(m3u8, timeout=30) as r:
         lines = r.read().decode("utf-8", "replace").splitlines()
     segs, t, dur = [], 0.0, None
@@ -86,9 +80,11 @@ def _hls_audio(info: dict, start: float, end: float, out: Path) -> bool:
                 segs.append((t, urllib.parse.urljoin(m3u8, ln)))
             t += dur
             dur = None
-    if not segs:
-        return False
+    return segs
 
+
+def _fetch_segments(segs: list, raw: Path) -> None:
+    """Download segments 32 at a time and append them in order (MPEG-TS segments concatenate as-is)."""
     def get(u):
         for attempt in range(5):
             try:
@@ -98,13 +94,48 @@ def _hls_audio(info: dict, start: float, end: float, out: Path) -> bool:
                 if attempt == 4:
                     raise
 
-    raw = out.with_suffix(".ts.part")
-    log(f"   fetching {len(segs)} audio segments in parallel...")
     with cf.ThreadPoolExecutor(32) as ex, open(raw, "wb") as f:
         for data in ex.map(get, [u for _, u in segs]):
             f.write(data)
+
+
+def _hls_formats(info: dict) -> list:
+    return [f for f in info.get("formats") or [] if "m3u8" in (f.get("protocol") or "")]
+
+
+def _hls_audio(info: dict, start: float, end: float, out: Path) -> bool:
+    """Fast path for HLS audio (Twitch): fetch the segments covering [start, end] in parallel, then trim to the
+    exact window. yt-dlp's ranged download goes through ffmpeg one segment at a time - hours for a long VOD."""
+    fmts = _hls_formats(info)
+    audio = [f for f in fmts if f.get("vcodec") == "none"] or sorted(fmts, key=lambda f: f.get("tbr") or 1e9)[:1]
+    if not audio:
+        return False
+    segs = _hls_segments(audio[0]["url"], start, end)
+    if not segs:
+        return False
+    raw = out.with_suffix(".ts.part")
+    log(f"   fetching {len(segs)} audio segments in parallel...")
+    _fetch_segments(segs, raw)
     run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start - segs[0][0]:.3f}", "-i", raw, "-t", f"{end - start:.3f}",
          "-vn", "-c:a", "copy", out])
+    raw.unlink(missing_ok=True)
+    return out.exists()
+
+
+def _hls_video(info: dict, start: float, end: float, out: Path, max_height: int) -> bool:
+    """Fast path for an HLS video section (Twitch). The file starts on the segment boundary at or before
+    `start` (no re-encode); callers measure the real start with align.source_start."""
+    vids = [f for f in _hls_formats(info) if f.get("vcodec") != "none" and (f.get("height") or 0) <= max_height]
+    if not vids:
+        return False
+    best = max(vids, key=lambda f: ((f.get("height") or 0), f.get("tbr") or 0))
+    segs = _hls_segments(best["url"], start, end)
+    if not segs:
+        return False
+    raw = out.with_suffix(".ts.part")
+    _fetch_segments(segs, raw)
+    run(["ffmpeg", "-y", "-v", "error", "-i", raw, "-c", "copy", "-bsf:a", "aac_adtstoasc",
+         "-movflags", "+faststart", out])
     raw.unlink(missing_ok=True)
     return out.exists()
 
@@ -134,11 +165,19 @@ def download_audio(url: str, out_dir: Path, start: float, end: float, full: bool
     return path
 
 
-def download_section(url: str, out_dir: Path, stem: str, start: float, end: float, max_height: int = 1080) -> Path:
-    """Download just [start, end] of the video (<= max_height)."""
+def download_section(url: str, out_dir: Path, stem: str, start: float, end: float, max_height: int = 1080,
+                     info: dict | None = None) -> Path:
+    """Download just [start, end] of the video (<= max_height). With Twitch `info` the file may start a few
+    seconds before `start` (segment boundary) - measure it with align.source_start."""
     existing = _find(out_dir, stem)
     if existing:
         return existing
+    if info and "twitch" in (info.get("extractor_key") or "").lower():
+        try:
+            if _hls_video(info, start, end, out_dir / f"{stem}.mp4", max_height):
+                return out_dir / f"{stem}.mp4"
+        except Exception as e:
+            log(f"   fast section download failed ({str(e)[:120]}) - using the normal download")
     opts = {
         **_BASE,
         "format": f"bv*[height<={max_height}]+ba/b[height<={max_height}]/wv*+ba/w",
