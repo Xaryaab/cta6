@@ -1,10 +1,13 @@
 """Downloading via yt-dlp: metadata, audio for analysis, and short video sections for clips."""
+import concurrent.futures as cf
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 import yt_dlp
 from yt_dlp.utils import download_range_func
 
-from .utils import log
+from .utils import log, run
 
 _BASE = {
     "quiet": True, "no_warnings": True, "noplaylist": True, "noprogress": True,
@@ -48,8 +51,8 @@ def get_info(url: str) -> dict:
         if "subscriber" in msg or "sub-only" in msg:
             raise SystemExit("This VOD is subscriber-only. Use cookies from an account that's subscribed.")
         raise SystemExit(f"Couldn't open the link: {str(e).replace('ERROR: ', '')[:300]}")
-    if info.get("is_live"):
-        raise SystemExit("Live streams aren't supported yet - wait for the VOD.")
+    if info.get("is_live") and "/videos/" not in url:
+        raise SystemExit("That's a live channel, not a VOD - pass the stream's /videos/<id> link instead.")
     return info
 
 
@@ -64,12 +67,61 @@ def _find(out_dir: Path, stem: str) -> Path | None:
     return None
 
 
-def download_audio(url: str, out_dir: Path, start: float, end: float, full: bool) -> Path:
+def _hls_audio(info: dict, start: float, end: float, out: Path) -> bool:
+    """Fast path for HLS audio (Twitch): fetch the segments covering [start, end] in parallel, then trim to the
+    exact window. yt-dlp's ranged download goes through ffmpeg one segment at a time - hours for a long VOD."""
+    fmts = [f for f in info.get("formats") or [] if "m3u8" in (f.get("protocol") or "")]
+    audio = [f for f in fmts if f.get("vcodec") == "none"] or sorted(fmts, key=lambda f: f.get("tbr") or 1e9)[:1]
+    if not audio:
+        return False
+    m3u8 = audio[0]["url"]
+    with urllib.request.urlopen(m3u8, timeout=30) as r:
+        lines = r.read().decode("utf-8", "replace").splitlines()
+    segs, t, dur = [], 0.0, None
+    for ln in lines:
+        if ln.startswith("#EXTINF:"):
+            dur = float(ln[8:].split(",")[0])
+        elif ln and not ln.startswith("#") and dur is not None:
+            if t + dur > start and t < end:
+                segs.append((t, urllib.parse.urljoin(m3u8, ln)))
+            t += dur
+            dur = None
+    if not segs:
+        return False
+
+    def get(u):
+        for attempt in range(5):
+            try:
+                with urllib.request.urlopen(u, timeout=30) as r:
+                    return r.read()
+            except Exception:
+                if attempt == 4:
+                    raise
+
+    raw = out.with_suffix(".ts.part")
+    log(f"   fetching {len(segs)} audio segments in parallel...")
+    with cf.ThreadPoolExecutor(32) as ex, open(raw, "wb") as f:
+        for data in ex.map(get, [u for _, u in segs]):
+            f.write(data)
+    run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start - segs[0][0]:.3f}", "-i", raw, "-t", f"{end - start:.3f}",
+         "-vn", "-c:a", "copy", out])
+    raw.unlink(missing_ok=True)
+    return out.exists()
+
+
+def download_audio(url: str, out_dir: Path, start: float, end: float, full: bool, info: dict | None = None) -> Path:
     """Audio-only download. When a --from/--to window is used, only that range is fetched."""
     stem = "audio_full" if full else f"audio_{int(start)}_{int(end)}"
     existing = _find(out_dir, stem)
     if existing:
         return existing
+    if info and "twitch" in (info.get("extractor_key") or "").lower():
+        try:
+            log("Downloading audio" + ("" if full else f" for window {int(start)}s-{int(end)}s") + " (fast)...")
+            if _hls_audio(info, start, end or float(info.get("duration") or 0), out_dir / f"{stem}.m4a"):
+                return out_dir / f"{stem}.m4a"
+        except Exception as e:
+            log(f"   fast audio download failed ({str(e)[:120]}) - using the normal download")
     log("Downloading audio" + ("" if full else f" for window {int(start)}s-{int(end)}s") + "...")
     opts = {**_BASE, "format": "bestaudio/best", "outtmpl": str(out_dir / f"{stem}.%(ext)s")}
     if not full:

@@ -74,6 +74,10 @@ def main(argv=None) -> None:
     if end - start < min_len:
         raise SystemExit("Window is shorter than the minimum clip length.")
     full = start <= 0 and (not duration or end >= duration)
+    if info.get("is_live"):
+        # VOD of a stream that's still going: lock to a fixed window so the cache doesn't mix lengths
+        log(f"Stream is still live - analysing the first {fmt_time(end)} recorded so far.")
+        full = False
     tag = "full" if full else f"{int(start)}_{int(end)}"
 
     job_dir = config.OUTPUT_DIR / job_id(info)
@@ -90,7 +94,7 @@ def main(argv=None) -> None:
         f"| captions {args.captions}" + (f" | prompt: {args.prompt!r}" if args.prompt else ""))
 
     # 1. audio
-    audio = download_audio(args.url, job_dir, start, end, full)
+    audio = download_audio(args.url, job_dir, start, end, full, info)
 
     # 2. transcript
     tr_path = work / "transcript.json"
