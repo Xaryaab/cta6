@@ -1,52 +1,97 @@
 # Clipper
 
-Paste a Twitch / YouTube / Kick VOD URL → get vertical (9:16) clips of the most viral moments, with TikTok-style captions burned in.
+Paste a Twitch, YouTube or Kick VOD link and get vertical (9:16) clips of its best moments, with captions burned in
+and a ready-to-paste title, caption and hashtags for each one. Built for clipping long gaming streams (GTA 6
+marathons were the test bed) but works on any stream.
+
+It runs on your machine with your own API keys. Gemini and Groq both have free tiers that are enough to try it.
 
 ## How it works
-1. Downloads **audio only** (fast, small)
-2. Transcribes with word timestamps: **Groq Whisper** (free key), or local faster-whisper on CPU as a fallback
-3. Audience signals: **unique chatters** + hype emotes from chat replay, **viewer-made Twitch clips**, YouTube **"most replayed"** heatmap
-4. Scores every second: loudness spikes + quiet-to-loud "payoff" jumps + hype words + audience signals → top 30 candidates
-5. **Text pass:** Gemini reads the transcript around each candidate and shortlists 2× the clips you asked for
-6. **Visual pass:** Gemini *watches* each shortlisted moment (360p video + audio) and sets exact cut points, title, description and hashtags
-7. **Rerank:** all watched clips are compared head-to-head and the best N are kept
-8. Detects the streamer's **facecam** → facecam/gameplay split layout, captions in your chosen template → `output/<job>/clips/<style>/`
 
-## Setup (Windows)
-```powershell
-uv venv --python 3.12 .venv
-uv pip install --python .venv -r requirements.txt
-# optional offline transcription fallback:
-uv pip install --python .venv -r requirements-local.txt
-copy .env.example .env   # then paste your free keys
+1. Downloads the **audio** only (Twitch audio is fetched in parallel, so an 18-hour VOD takes minutes)
+2. Transcribes it with word timestamps: **Groq Whisper**, or local faster-whisper on CPU as a fallback
+3. Collects audience signals: unique chatters and hype emotes from chat replay, viewer-made Twitch clips,
+   YouTube's "most replayed" heatmap
+4. Scores every second: loudness spikes, quiet-to-loud payoffs, hype words and the audience signals, then keeps the
+   top 30 candidates
+5. **Text pass:** an LLM reads the transcript around each candidate and shortlists twice as many clips as you asked for
+6. **Visual pass:** Gemini watches each shortlisted moment (360p video and audio) and sets the cut points, title,
+   description and hashtags
+7. **Rerank:** the watched clips are compared against each other and the best N are kept
+8. **Render:** finds the streamer's facecam for a facecam-over-gameplay layout, re-syncs captions to each downloaded
+   section, masks swear words on screen (not in the audio) and writes the clips to `output/<job>/clips/`
+
+Every stage is cached in `output/<job>/`, so reruns are fast and a run stopped by a rate limit resumes where it left off.
+
+## Setup
+
+You need **Python 3.10+**. FFmpeg is downloaded automatically on the first run if it isn't installed.
+For YouTube links, [Node.js](https://nodejs.org) is also recommended (yt-dlp uses it to get past YouTube's checks).
+
+```bash
+git clone <this repo>
+cd <repo folder>
+python -m venv .venv
 ```
-- Gemini key: https://aistudio.google.com/apikey
-- Groq key: https://console.groq.com/keys
-- **More free quota:** put extra Gemini keys (other Google accounts) in `GEMINI_API_KEYS=k2,k3,...` - they're rotated
-  when one hits its limit. Add free OpenRouter keys in `OPENROUTER_API_KEYS=...` and the text-only steps (text pass,
-  rerank) run there, so Gemini quota is kept for watching video.
-- **Model routing:** each AI step goes to the provider that suits it, falling through to the next on failure.
-  Text pass (long, needs judgment): OpenRouter → Groq → Gemini. Rerank (short): Groq → OpenRouter → Gemini.
-  Watching video / facecam: Gemini only. Prompts too big for Groq's free tier skip it automatically, and the
-  visual pass stops early once it has enough good clips.
 
-FFmpeg is downloaded automatically on the first run if it isn't installed.
+Windows:
+```powershell
+.venv\Scripts\pip install -r requirements.txt
+copy .env.example .env
+```
+
+macOS / Linux:
+```bash
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env
+```
+
+Then open `.env` and add your keys:
+
+| Key | Needed for | Get one |
+|---|---|---|
+| `GEMINI_API_KEY` | picking and watching moments, facecam detection | https://aistudio.google.com/apikey |
+| `GROQ_API_KEY` | fast transcription | https://console.groq.com/keys |
+| `OPENROUTER_API_KEYS` | optional: runs text-only steps on free models to save Gemini quota | https://openrouter.ai/keys |
+| `TWITCH_CLIENT_ID` / `_SECRET` | optional: viewer-made clips as a signal | https://dev.twitch.tv/console/apps |
+
+Free tiers have daily limits. You can list several keys comma-separated (`GEMINI_API_KEYS`, `GROQ_API_KEYS`) and
+they're rotated when one runs out. No Groq key? Install `requirements-local.txt` to transcribe on CPU instead (slow).
 
 ## Usage
-```powershell
-.venv\Scripts\python -m clipper <url> --clips 8
-.venv\Scripts\python -m clipper <url> --style funny            # auto|funny|chaos|rage|drama|wholesome|clutch
-.venv\Scripts\python -m clipper <url> --prompt "every police chase"
-.venv\Scripts\python -m clipper <url> --length short           # auto 15-60s | short 10-30 | medium 30-60 | long 60-90
-.venv\Scripts\python -m clipper <url> --captions hormozi        # bold | hormozi | minimal | karaoke
-.venv\Scripts\python -m clipper <url> --layout split           # auto | split | blur | crop
-.venv\Scripts\python -m clipper <url> --facecam 0.75,0,0.25,0.3  # set webcam box manually (x,y,w,h fractions)
-.venv\Scripts\python -m clipper <url> --from 1:00:00 --to 2:00:00  # only analyse a slice
-.venv\Scripts\python -m clipper <url> --no-vision              # skip the visual pass (faster)
-.venv\Scripts\python -m clipper <url> --rerender / --repick
+
+Windows uses `.venv\Scripts\python`, macOS / Linux `.venv/bin/python`:
+
+```bash
+python -m clipper <vod-url>                                  # 8 clips, sensible defaults
+python -m clipper <vod-url> --clips 5 --style funny          # auto | funny | chaos | rage | drama | wholesome | clutch
+python -m clipper <vod-url> --prompt "every police chase"    # describe what you want
+python -m clipper <vod-url> --length short                   # auto 15-60s | short 10-30 | medium 30-60 | long 60-90
+python -m clipper <vod-url> --captions hormozi               # bold | hormozi | minimal | karaoke
+python -m clipper <vod-url> --layout crop                    # auto | split | blur | crop
+python -m clipper <vod-url> --facecam 0,0,0.26,0.25          # set the webcam box yourself (x,y,w,h as fractions)
+python -m clipper <vod-url> --from 1:00:00 --to 3:00:00      # only analyse part of the VOD
+python -m clipper <vod-url> --no-vision                      # skip the visual pass (faster, less Gemini quota)
+python -m clipper <vod-url> --rerender                       # redo captions and render only, no new picks
+python -m clipper <vod-url> --repick                         # ask the AI to pick again
 ```
-Each clip also gets a `.txt` with a ready-to-paste title, description and hashtags.
 
-Optional: add `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` (free app at https://dev.twitch.tv/console/apps) to use viewer-made clips as a signal.
+Run `python -m clipper --help` for every option, including `--script` (Roman-script captions for Hindi/Urdu streams)
+and `--game-dialogue` (how in-game character speech is captioned).
 
-Every stage is cached in `output/<job>/`, so reruns are fast and free-tier rate limits just resume where they stopped.
+Each clip comes with a `.txt` file holding a title, a caption and hashtags.
+
+**Twitch VODs of streams that are still live** work too: the clipper analyses what has been recorded so far.
+
+### Tips
+
+- **Gemini overloaded (503 errors)?** The clipper switches to the fallback model and retries. If both stay down,
+  rerun with `--no-vision`. Your transcript and picks are cached, so nothing is redone.
+- **Wrong layout?** `--facecam` sets the webcam box by hand. `--layout crop` suits footage without a facecam box.
+- **Swear words** are masked in captions by default. Set `CENSOR_CAPTIONS = False` in `clipper/config.py` to turn it off.
+- **Age-restricted or sub-only VODs:** export a `cookies.txt` from your browser and set `YTDLP_COOKIES_FILE` in `.env`.
+
+## Responsible use
+
+Only clip content you have the rights or permission to use, such as a streamer's official clipping campaign, and
+follow the terms of the platforms you download from and post to. You are responsible for what you publish.

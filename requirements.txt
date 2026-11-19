@@ -3,5 +3,6 @@ static-ffmpeg>=2.7
 numpy>=1.26
 groq>=0.11
 google-genai>=1.0
+httpx>=0.27
 python-dotenv>=1.0
 chat-downloader>=0.2.8

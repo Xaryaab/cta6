@@ -32,7 +32,7 @@ OPENROUTER_API_KEYS = _key_list("OPENROUTER_API_KEY", "OPENROUTER_API_KEYS")
 OPENROUTER_MODELS = [m.strip() for m in (os.getenv("OPENROUTER_MODELS") or
                      "google/gemma-4-31b-it:free,nvidia/nemotron-3-ultra-550b-a55b:free,inclusionai/ling-3.2-flash:free"
                      ).split(",") if m.strip()]
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+GEMINI_MODEL = (os.getenv("GEMINI_MODEL") or "gemini-3.8-flash").strip()
 
 # Model that WATCHES video in the visual pass (defaults to GEMINI_MODEL)
 GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "").strip() or GEMINI_MODEL
@@ -41,14 +41,14 @@ CHAT_TIMEOUT = float(os.getenv("CHAT_TIMEOUT") or 600)  # seconds; chat replay i
 
 GROQ_API_KEYS = _key_list("GROQ_API_KEY", "GROQ_API_KEYS")
 GROQ_API_KEY = GROQ_API_KEYS[0] if GROQ_API_KEYS else ""
-GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo").strip()
+GROQ_WHISPER_MODEL = (os.getenv("GROQ_WHISPER_MODEL") or "whisper-large-v3-turbo").strip()
 # Groq text models (free, very fast) used by the router for small text steps like rerank. Tried in order.
 GROQ_TEXT_MODELS = [m.strip() for m in (os.getenv("GROQ_TEXT_MODELS") or
                     "openai/gpt-oss-120b,llama-3.3-70b-versatile,openai/gpt-oss-20b").split(",") if m.strip()]
 # Groq's free tier rejects big prompts (tokens-per-minute cap) - prompts estimated above this skip Groq.
 GROQ_MAX_PROMPT_TOKENS = int(os.getenv("GROQ_MAX_PROMPT_TOKENS") or 6000)
 
-LOCAL_WHISPER_MODEL = os.getenv("LOCAL_WHISPER_MODEL", "small").strip()
+LOCAL_WHISPER_MODEL = (os.getenv("LOCAL_WHISPER_MODEL") or "small").strip()
 
 # Cookies for age-restricted videos (pick one): path to cookies.txt, or a browser name (firefox, edge, chrome, brave)
 YTDLP_COOKIES_FILE = os.getenv("YTDLP_COOKIES_FILE", "").strip().strip('"')
