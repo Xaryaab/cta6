@@ -68,6 +68,7 @@ CANDIDATES = 30              # candidate moments sent to the LLM
 CANDIDATE_SPACING = 40       # min seconds between candidate peaks
 CONTEXT_BEFORE = 45          # transcript context around a peak given to the LLM
 CONTEXT_AFTER = 40
+CENSOR_CAPTIONS = True      # mask swear words in burned-in captions (f***); audio untouched
 SECTION_PAD = 2.0            # extra seconds downloaded around each clip
 VISION_PAD = 10.0            # extra seconds around a shortlisted clip that Gemini gets to watch
 VISION_STOP_EXTRA = 0.5      # visual pass stops once it has clips * (1 + this) good clips (saves Gemini quota)

@@ -1,5 +1,8 @@
 """Burned-in captions as an ASS subtitle file: several templates + hook title, positioned per layout."""
+import re
 from pathlib import Path
+
+from . import config
 
 W, H = 1080, 1920
 
@@ -38,8 +41,21 @@ def _t(sec: float) -> str:
     return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
 
 
+# Swear words are masked in captions (f***) - the audio is untouched.
+_SWEAR = re.compile(r"(motherfuck|fuck|shit|bitch|cunt|nigg|faggot|whore|slut|asshole|pussy|dick|cock)\w*", re.I)
+_SAFE = {"cockpit", "cocktail", "dickens", "shitake", "scunthorpe"}
+
+
+def _censor(w: str) -> str:
+    if w.lower().strip(".,!?'\"") in _SAFE:
+        return w
+    return _SWEAR.sub(lambda m: m.group(0)[0] + "*" * (len(m.group(0)) - 1), w)
+
+
 def _clean(word: str, upper: bool) -> str:
     w = word.replace("{", "(").replace("}", ")").replace("\\", "").strip()
+    if config.CENSOR_CAPTIONS:
+        w = _censor(w)
     return w.upper() if upper else w
 
 
