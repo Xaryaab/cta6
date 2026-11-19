@@ -27,6 +27,20 @@ def _quota_exit():
                      "(midnight Pacific time) and it picks up from here.")
 
 
+def _check_keys() -> None:
+    """Fail fast with setup instructions instead of after downloading a whole VOD."""
+    if not config.GROQ_API_KEYS:
+        try:
+            import faster_whisper  # noqa: F401
+        except ImportError:
+            raise SystemExit("No GROQ_API_KEY in .env, so there's no way to transcribe.\n"
+                             "  Add a free key from https://console.groq.com/keys to .env, or install\n"
+                             "  requirements-local.txt to transcribe on your CPU instead (slow).")
+    if not config.GEMINI_API_KEYS:
+        log("No GEMINI_API_KEY in .env - clips will be picked without the AI watching them, and the facecam\n"
+            "  won't be found automatically. Free key: https://aistudio.google.com/apikey")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="clipper", description="Turn a stream/VOD URL into viral vertical clips.")
     ap.add_argument("url", help="Twitch / YouTube / Kick VOD or video URL")
@@ -61,6 +75,7 @@ def main(argv=None) -> None:
     max_len = args.max_len if args.max_len is not None else max_len
 
     t0 = time.time()
+    _check_keys()
     ensure_ffmpeg()
     set_cookies(args.cookies, args.cookies_from_browser)
 
