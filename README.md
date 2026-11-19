@@ -95,3 +95,7 @@ Each clip comes with a `.txt` file holding a title, a caption and hashtags.
 
 Only clip content you have the rights or permission to use, such as a streamer's official clipping campaign, and
 follow the terms of the platforms you download from and post to. You are responsible for what you publish.
+
+## License
+
+MIT - see [LICENSE](LICENSE).
