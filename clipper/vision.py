@@ -20,6 +20,7 @@ Decide the single best self-contained short clip inside this excerpt:
 - judge what you SEE and HEAR (crashes, chases, reactions, facial expressions, tone), not just the words
 
 Write title, description and hashtags in the SAME LANGUAGE the streamer speaks (e.g. Russian stream -> Russian title).
+For Hindi/Urdu streams use ROMAN script (Latin letters, e.g. "bhai yeh kya ho gaya"), never Devanagari or Urdu script.
 
 Return ONLY JSON:
 {{"keep": <true if this is genuinely post-worthy, else false>,
@@ -55,8 +56,14 @@ def watch_and_rank(picks: list, url: str, sources: Path, work: Path, transcript:
     style_text = STYLES.get(style, STYLES["auto"])
     words, segments = transcript["words"], transcript["segments"]
 
+    # picks arrive best-first from the text pass; stop watching once we have enough strong clips so the
+    # weaker tail of the shortlist doesn't burn Gemini video quota (cached results are free and still used)
+    enough = n + max(1, round(n * config.VISION_STOP_EXTRA))
     watched = []
     for i, p in enumerate(picks, 1):
+        if sum(1 for w in watched if w.get("watched")) >= enough:
+            log(f"Visual pass: {enough} good clips found - skipping the remaining {len(picks) - i + 1} to save quota")
+            break
         a = max(0.0, p["start"] - config.VISION_PAD)
         b = p["end"] + config.VISION_PAD
         key = f"{int(a * 10)}_{int(b * 10)}_{style}_{short_hash(prompt)}"
@@ -132,7 +139,7 @@ def _rerank(clips: list, transcript: dict, n: int, style_text: str, prompt: str)
         blocks.append(f"--- Clip {c['id']} ({c['end'] - c['start']:.0f}s, individual score {c.get('score')}) ---\n"
                       f"Title: {c['title']}\nWhat happens: {c.get('reason', '')}\nSpeech:\n{speech}")
     log(f"Rerank: comparing {len(clips)} clips head-to-head...")
-    res = llm.ask_text_json(RERANK_PROMPT.format(k=len(clips), n=n, style=style_text, user_prompt=user_prompt_text(prompt),
+    res = llm.ask_task("rerank", RERANK_PROMPT.format(k=len(clips), n=n, style=style_text, user_prompt=user_prompt_text(prompt),
                                             blocks="\n\n".join(blocks)), temperature=0.2, label="Rerank")
     order = res.get("order") if isinstance(res, dict) else res if isinstance(res, list) else None
     by_id = {c["id"]: c for c in clips}

@@ -31,7 +31,8 @@ Pick the {n} BEST clips. A great clip:
 Skip loud gameplay where nothing interesting is said, ads, and "be right back" segments.
 Clips must not overlap. Use only timestamps inside a candidate's transcript window.
 
-Write titles in the SAME LANGUAGE the streamer speaks.
+Write titles in the SAME LANGUAGE the streamer speaks. For Hindi/Urdu streams write them in ROMAN script
+(Latin letters, e.g. "bhai yeh kya ho gaya"), never Devanagari or Urdu script.
 
 Return ONLY a JSON array, best first, of objects:
 {{"candidate": <id>, "start": <seconds>, "end": <seconds>, "title": "<hook caption, max 8 words, no hashtags>",
@@ -78,7 +79,7 @@ def select_clips(candidates: list, transcript: dict, n: int, min_len: float, max
     picks = None
     if llm.text_available():
         log(f"Text pass: AI reads {len(candidates)} candidates (style: {style}{', prompt' if prompt else ''})...")
-        picks = llm.ask_text_json(PROMPT.format(
+        picks = llm.ask_task("select", PROMPT.format(
             k=len(candidates), n=n, min_len=int(min_len), max_len=int(max_len), title=title,
             style=STYLES.get(style, STYLES["auto"]), user_prompt=user_prompt_text(prompt), blocks="\n\n".join(blocks),
         ), label="Text pass")

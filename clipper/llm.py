@@ -3,8 +3,9 @@
 Gemini   - several keys (one per Google account) are rotated; each call starts on the next key to spread the
            per-minute limits, and a key whose daily quota is gone is skipped for the rest of the run.
            Main model first, fallback model when the main one is overloaded (503) or out of quota on every key.
-OpenRouter - optional; ask_text_json() sends text-only prompts there (rotating keys and free models) so the
-           Gemini quota is kept for the steps that need video/images. Falls back to Gemini if it fails.
+OpenRouter - optional; free text models (rotating keys) for text-only steps so Gemini quota is kept for video.
+Groq     - optional; the Whisper keys also run fast free text models for small text steps (rerank).
+Router   - ask_task(task, prompt) picks the provider order per task (see ROUTES) and falls through on failure.
 """
 import json
 import re
@@ -20,6 +21,10 @@ _cursor = 0
 
 _or_exhausted: set = set()  # OpenRouter keys out of daily quota
 _or_dead: set = set()       # OpenRouter models that are unavailable
+
+_groq_exhausted: set = set()  # (key, model) pairs out of daily quota (Groq text models)
+_groq_cooldown: dict = {}     # (key, model) -> time.time() when it may be used again
+_groq_dead: set = set()       # Groq text models that are unavailable
 
 
 def _client(key: str):
@@ -208,15 +213,117 @@ def _openrouter(prompt: str, temperature: float, label: str):
     return None
 
 
-def ask_text_json(prompt: str, temperature: float = 0.4, label: str = "LLM"):
-    """Text-only prompt: OpenRouter first (if keys set) to save Gemini quota, then Gemini."""
-    if config.OPENROUTER_API_KEYS:
-        res = _openrouter(prompt, temperature, label)
+def _groq_text(prompt: str, temperature: float, label: str):
+    """Try Groq keys x text models without waiting: a limited key hands over to the next one, and if all are
+    limited we return None so the router moves on to the next provider. Returns parsed JSON or None."""
+    import httpx
+
+    for mdl in config.GROQ_TEXT_MODELS:
+        if mdl in _groq_dead:
+            continue
+        for key in config.GROQ_API_KEYS:
+            if (key, mdl) in _groq_exhausted or _groq_cooldown.get((key, mdl), 0) > time.time():
+                continue
+            for attempt in range(2):
+                try:
+                    r = httpx.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {key}"},
+                        json={"model": mdl, "temperature": temperature,
+                              "messages": [{"role": "user", "content": prompt}]},
+                        timeout=120,
+                    )
+                except httpx.HTTPError as e:
+                    log(f"{label}: Groq network error ({e}) - retrying...")
+                    time.sleep(3)
+                    continue
+                body = r.text
+                if r.status_code == 200:
+                    try:
+                        content = r.json()["choices"][0]["message"].get("content") or ""
+                    except (ValueError, KeyError, IndexError):
+                        continue
+                    parsed = parse_json(content)
+                    if parsed is not None:
+                        log(f"{label}: answered by Groq {mdl}")
+                        return parsed
+                    log(f"{label}: Groq {mdl} returned unreadable JSON - retrying...")
+                    continue
+                if r.status_code == 413 or "too large" in body.lower():
+                    log(f"{label}: prompt too big for Groq free tier - skipping Groq")
+                    return None
+                if r.status_code == 429:
+                    if "per day" in body.lower() or "(TPD)" in body or "(RPD)" in body:
+                        _groq_exhausted.add((key, mdl))
+                    else:
+                        _groq_cooldown[(key, mdl)] = time.time() + _retry_delay(body)
+                    break  # next key
+                if r.status_code in (401, 403):
+                    for m in config.GROQ_TEXT_MODELS:
+                        _groq_exhausted.add((key, m))
+                    log(f"{label}: Groq key rejected ({r.status_code}) - skipping it")
+                    break
+                if r.status_code in (400, 404):
+                    _groq_dead.add(mdl)
+                    log(f"{label}: Groq model {mdl} unavailable - trying the next model")
+                    break
+                time.sleep(3 * (attempt + 1))  # 5xx
+            if mdl in _groq_dead:
+                break
+    return None
+
+
+# ---------------------------------------------------------------- router
+# Each text task lists providers best-first. The router walks the list, skipping providers that have no keys,
+# whose quota is gone, or that can't take a prompt this big, and falls through to the next on failure.
+#   select - the text pass: long prompt (30 candidates of transcript) that needs good judgment.
+#   rerank - short prompt, simple ordering job: the fastest provider is fine.
+#   translit - short batches of words to Roman script: fastest provider.
+# Video/image steps (visual pass, facecam) always go to Gemini via ask_json() - nothing else can watch video.
+ROUTES = {
+    "select": ["openrouter", "groq", "gemini"],
+    "rerank": ["groq", "openrouter", "gemini"],
+    "translit": ["groq", "openrouter", "gemini"],  # Roman script for Hindi/Urdu captions: small, mechanical
+    "speaker": ["groq", "openrouter", "gemini"],   # streamer vs in-game dialogue per line: short, simple
+}
+
+
+def _est_tokens(prompt: str) -> int:
+    return len(prompt) // 3  # rough; transcripts in other languages tokenize worse than English
+
+
+def _provider_ok(name: str, prompt: str) -> bool:
+    if name == "groq":
+        return (bool(config.GROQ_API_KEYS) and len(_groq_dead) < len(config.GROQ_TEXT_MODELS)
+                and _est_tokens(prompt) <= config.GROQ_MAX_PROMPT_TOKENS)
+    if name == "openrouter":
+        return bool(config.OPENROUTER_API_KEYS) and len(_or_exhausted) < len(config.OPENROUTER_API_KEYS)
+    if name == "gemini":
+        return available() and not quota_out()
+    return False
+
+
+def ask_task(task: str, prompt: str, temperature: float = 0.4, label: str = "LLM"):
+    """Route a text-only prompt to the best available provider for this task. Returns parsed JSON or None."""
+    route = [p for p in ROUTES.get(task, ROUTES["select"]) if _provider_ok(p, prompt)]
+    for i, name in enumerate(route):
+        if name == "groq":
+            res = _groq_text(prompt, temperature, label)
+        elif name == "openrouter":
+            res = _openrouter(prompt, temperature, label)
+        else:
+            res = ask_json(prompt, temperature=temperature, label=label)
         if res is not None:
             return res
-        log(f"{label}: OpenRouter failed - using Gemini instead")
-    return ask_json(prompt, temperature=temperature, label=label)
+        if i + 1 < len(route):
+            log(f"{label}: {name} failed - routing to {route[i + 1]}")
+    return None
+
+
+def ask_text_json(prompt: str, temperature: float = 0.4, label: str = "LLM"):
+    """Back-compat: text-only prompt routed as the 'select' task."""
+    return ask_task("select", prompt, temperature, label)
 
 
 def text_available() -> bool:
-    return available() or bool(config.OPENROUTER_API_KEYS)
+    return available() or bool(config.OPENROUTER_API_KEYS) or bool(config.GROQ_API_KEYS)

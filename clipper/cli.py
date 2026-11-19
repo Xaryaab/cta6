@@ -10,8 +10,10 @@ from .chat import fetch_chat
 from .ingest import download_audio, download_section, get_info, job_id, set_cookies
 from .layout import detect_facecam, parse_manual
 from .render import prepare_fonts, render_clip
+from .romanize import needs_roman, romanize_clip, romanize_text, romanize_titles
 from .select_llm import LENGTHS, STYLES, select_clips
 from .signals import find_candidates, loudness_per_second
+from .speakers import game_lines, label_segments, tag_words
 from .transcribe import transcribe
 from .twitch_clips import fetch_vod_clips
 from .utils import ensure_ffmpeg, fmt_time, load_json, log, parse_time, save_json, short_hash, slugify
@@ -38,6 +40,11 @@ def main(argv=None) -> None:
                     help="auto = facecam/gameplay split if a webcam is found, else blur")
     ap.add_argument("--facecam", default="", help="manual webcam box as fractions x,y,w,h (e.g. 0.75,0,0.25,0.3)")
     ap.add_argument("--captions", choices=list(TEMPLATES), default="bold", help="caption template")
+    ap.add_argument("--script", choices=["auto", "roman", "native"], default="auto",
+                    help="caption script for Hindi/Urdu: auto = Roman when the transcript is Devanagari/Urdu")
+    ap.add_argument("--game-dialogue", choices=["small", "same", "hide"], default="small",
+                    help="in-game character speech: small = faded line under the streamer's captions (default), "
+                         "same = caption it like the streamer, hide = streamer only")
     ap.add_argument("--from", dest="t_from", help="start of window to analyse, e.g. 1:00:00")
     ap.add_argument("--to", dest="t_to", help="end of window to analyse, e.g. 2:00:00")
     ap.add_argument("--no-chat", action="store_true", help="skip chat replay download")
@@ -183,9 +190,24 @@ def main(argv=None) -> None:
 
     # 9. captions + render
     prepare_fonts(job_dir)
+    words = transcript["words"]
+    roman = args.script == "roman" or (args.script == "auto" and needs_roman(words))
+    if roman:
+        log("Hindi/Urdu script detected - captions and titles will be in Roman script")
+        titles = romanize_titles([p["title"] for p in picks], work / "roman_titles.json")
+        picks = [{**p, "title": t} for p, t in zip(picks, titles)]
     summary = []
     for i, (p, (src, pad_s)) in enumerate(zip(picks, srcs), 1):
         s, e = p["start"], p["end"]
+        if roman:
+            words = romanize_clip(words, s, e, work / "roman_words.json")
+        if args.game_dialogue != "same":
+            labels = label_segments(transcript["segments"], s, e, work / "speakers.json", roman)
+            words = tag_words(words, transcript["words"], transcript["segments"], labels, s, e)
+            lines = game_lines(transcript["segments"], labels)
+        else:
+            lines = []
+            p = {**p, "title": romanize_text(p["title"])}  # safety net if the title call failed
         name = f"{i:02d}_{slugify(p['title'])}"
         out = clips_dir / f"{name}_{layout}_{args.captions}.mp4"
         log(f"[{i}/{len(picks)}] {fmt_time(s)}-{fmt_time(e)} ({e - s:.0f}s) score {p.get('score')}: {p['title']!r}")
@@ -193,7 +215,7 @@ def main(argv=None) -> None:
             log("   already rendered")
         else:
             ass = work / f"{name}.ass"
-            build_ass(transcript["words"], s, e, p["title"], layout, ass, args.captions)
+            build_ass(words, s, e, p["title"], layout, ass, args.captions, args.game_dialogue, lines)
             log("   rendering...")
             render_clip(job_dir, src, s - pad_s, e - s, ass, out, layout, facecam)
         tags = " ".join(f"#{h}" for h in p.get("hashtags") or [])

@@ -25,6 +25,10 @@ copy .env.example .env   # then paste your free keys
 - **More free quota:** put extra Gemini keys (other Google accounts) in `GEMINI_API_KEYS=k2,k3,...` - they're rotated
   when one hits its limit. Add free OpenRouter keys in `OPENROUTER_API_KEYS=...` and the text-only steps (text pass,
   rerank) run there, so Gemini quota is kept for watching video.
+- **Model routing:** each AI step goes to the provider that suits it, falling through to the next on failure.
+  Text pass (long, needs judgment): OpenRouter → Groq → Gemini. Rerank (short): Groq → OpenRouter → Gemini.
+  Watching video / facecam: Gemini only. Prompts too big for Groq's free tier skip it automatically, and the
+  visual pass stops early once it has enough good clips.
 
 FFmpeg is downloaded automatically on the first run if it isn't installed.
 

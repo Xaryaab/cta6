@@ -42,6 +42,11 @@ CHAT_TIMEOUT = float(os.getenv("CHAT_TIMEOUT") or 600)  # seconds; chat replay i
 GROQ_API_KEYS = _key_list("GROQ_API_KEY", "GROQ_API_KEYS")
 GROQ_API_KEY = GROQ_API_KEYS[0] if GROQ_API_KEYS else ""
 GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo").strip()
+# Groq text models (free, very fast) used by the router for small text steps like rerank. Tried in order.
+GROQ_TEXT_MODELS = [m.strip() for m in (os.getenv("GROQ_TEXT_MODELS") or
+                    "openai/gpt-oss-120b,llama-3.3-70b-versatile,openai/gpt-oss-20b").split(",") if m.strip()]
+# Groq's free tier rejects big prompts (tokens-per-minute cap) - prompts estimated above this skip Groq.
+GROQ_MAX_PROMPT_TOKENS = int(os.getenv("GROQ_MAX_PROMPT_TOKENS") or 6000)
 
 LOCAL_WHISPER_MODEL = os.getenv("LOCAL_WHISPER_MODEL", "small").strip()
 
@@ -65,4 +70,5 @@ CONTEXT_BEFORE = 45          # transcript context around a peak given to the LLM
 CONTEXT_AFTER = 40
 SECTION_PAD = 2.0            # extra seconds downloaded around each clip
 VISION_PAD = 10.0            # extra seconds around a shortlisted clip that Gemini gets to watch
+VISION_STOP_EXTRA = 0.5      # visual pass stops once it has clips * (1 + this) good clips (saves Gemini quota)
 PREVIEW_HEIGHT = 360         # resolution of the clips Gemini watches (small = fast + fewer tokens)
